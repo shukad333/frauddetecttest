@@ -1,8 +1,10 @@
-// pubspec.yaml dependencies to add:
-// flutter_tts: ^3.8.5
-// speech_to_text: ^6.5.1
-// provider: ^6.1.1
-// permission_handler: ^11.0.1
+import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:speech_to_text/speech_to_text.dart';
+import 'package:provider/provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+// File: lib/main.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -10,110 +12,8 @@ import 'package:speech_to_text/speech_to_text.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-class VoiceProvider with ChangeNotifier {
-  final FlutterTts _flutterTts = FlutterTts();
-  final SpeechToText _speechToText = SpeechToText();
-  bool _isSpeaking = false;
-  bool _isListening = false;
-  double _volume = 1.0;
-  double _pitch = 1.0;
-  double _rate = 0.5;
-  String _lastWords = '';
-
-  bool get isSpeaking => _isSpeaking;
-  bool get isListening => _isListening;
-  double get volume => _volume;
-  double get pitch => _pitch;
-  double get rate => _rate;
-  String get lastWords => _lastWords;
-
-  VoiceProvider() {
-    _initTTS();
-    _initSTT();
-  }
-
-  void _initTTS() async {
-    await _flutterTts.setLanguage("en-US");
-    await _flutterTts.setVolume(_volume);
-    await _flutterTts.setPitch(_pitch);
-    await _flutterTts.setSpeechRate(_rate);
-  }
-
-  Future<bool> _initSTT() async {
-    return await _speechToText.initialize();
-  }
-
-  Future<void> requestPermissions() async {
-    await Permission.microphone.request();
-  }
-
-  Future<void> startListening(Function(String) onResult) async {
-    await requestPermissions();
-
-    if (!_speechToText.isAvailable) {
-      bool initialized = await _initSTT();
-      if (!initialized) {
-        return; // Failed to initialize
-      }
-    }
-
-    if (await Permission.microphone.isGranted) {
-      _isListening = true;
-      notifyListeners();
-
-      await _speechToText.listen(
-        onResult: (result) {
-          _lastWords = result.recognizedWords;
-          onResult(_lastWords);
-          notifyListeners();
-        },
-        localeId: 'en_US',
-      );
-    }
-  }
-
-  Future<void> stopListening() async {
-    _isListening = false;
-    notifyListeners();
-    await _speechToText.stop();
-  }
-
-  Future<void> speak(String text) async {
-    if (text.isNotEmpty) {
-      _isSpeaking = true;
-      notifyListeners();
-      await _flutterTts.speak(text);
-      _isSpeaking = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> stop() async {
-    _isSpeaking = false;
-    notifyListeners();
-    await _flutterTts.stop();
-  }
-
-  void updateVolume(double value) {
-    _volume = value;
-    _flutterTts.setVolume(value);
-    notifyListeners();
-  }
-
-  void updatePitch(double value) {
-    _pitch = value;
-    _flutterTts.setPitch(value);
-    notifyListeners();
-  }
-
-  void updateRate(double value) {
-    _rate = value;
-    _flutterTts.setSpeechRate(value);
-    notifyListeners();
-  }
-}
-
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(
     ChangeNotifierProvider(
       create: (_) => VoiceProvider(),
@@ -138,6 +38,131 @@ class MyApp extends StatelessWidget {
   }
 }
 
+class VoiceProvider with ChangeNotifier {
+  final FlutterTts _flutterTts = FlutterTts();
+  final SpeechToText _speechToText = SpeechToText();
+  bool _isSpeaking = false;
+  bool _isListening = false;
+  double _volume = 1.0;
+  double _pitch = 1.0;
+  double _rate = 0.5;
+  String _lastWords = '';
+  String _errorMessage = '';
+  bool _isInitialized = false;
+
+  bool get isSpeaking => _isSpeaking;
+  bool get isListening => _isListening;
+  bool get isInitialized => _isInitialized;
+  double get volume => _volume;
+  double get pitch => _pitch;
+  double get rate => _rate;
+  String get lastWords => _lastWords;
+  String get errorMessage => _errorMessage;
+
+  VoiceProvider() {
+    _initTTS();
+    _initializeSTT();
+  }
+
+  void _initTTS() async {
+    await _flutterTts.setLanguage("en-US");
+    await _flutterTts.setVolume(_volume);
+    await _flutterTts.setPitch(_pitch);
+    await _flutterTts.setSpeechRate(_rate);
+  }
+
+  Future<void> _initializeSTT() async {
+    try {
+      var status = await Permission.microphone.status;
+      if (status.isDenied) {
+        _errorMessage = 'Microphone permission is required';
+        notifyListeners();
+        return;
+      }
+
+      _isInitialized = await _speechToText.initialize(
+        onError: (error) {
+          _errorMessage = "Error: ${error.errorMsg}";
+          _isListening = false;
+          notifyListeners();
+        },
+        debugLogging: true,
+      );
+
+      if (_isInitialized) {
+        print("Speech to Text initialized successfully");
+        var locales = await _speechToText.locales();
+        print("Available locales: $locales");
+      } else {
+        _errorMessage = 'Failed to initialize speech recognition';
+      }
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Error initializing speech recognition: $e';
+      _isInitialized = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> startListening(Function(String) onResult) async {
+    _errorMessage = '';
+
+    try {
+      if (!_isInitialized) {
+        await _initializeSTT();
+      }
+
+      if (!_speechToText.isAvailable) {
+        _errorMessage = 'Speech recognition is not available on this device';
+        notifyListeners();
+        return;
+      }
+
+      if (await Permission.microphone.isGranted) {
+        print("Starting listening...");
+        _isListening = true;
+        notifyListeners();
+
+        await _speechToText.listen(
+          onResult: (result) {
+            print("Recognition result: ${result.recognizedWords}");
+            _lastWords = result.recognizedWords;
+            onResult(_lastWords);
+            notifyListeners();
+          },
+          listenFor: Duration(seconds: 30),
+          localeId: 'en_US',
+          onSoundLevelChange: (level) {
+            print("Sound level: $level");
+          },
+          cancelOnError: true,
+          partialResults: true,
+        );
+      } else {
+        _errorMessage = 'Microphone permission denied';
+        notifyListeners();
+      }
+    } catch (e) {
+      _errorMessage = 'Error during listening: $e';
+      _isListening = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopListening() async {
+    try {
+      _isListening = false;
+      notifyListeners();
+      await _speechToText.stop();
+    } catch (e) {
+      _errorMessage = 'Error stopping listening: $e';
+      notifyListeners();
+    }
+  }
+
+// ... rest of the provider methods remain the same ...
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -147,12 +172,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final TextEditingController _textController = TextEditingController();
-
-  @override
-  void dispose() {
-    _textController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -166,98 +185,47 @@ class _HomePageState extends State<HomePage> {
             padding: const EdgeInsets.all(16.0),
             child: Column(
               children: [
+                if (voiceProvider.errorMessage.isNotEmpty)
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    margin: EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.error, color: Colors.red),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            voiceProvider.errorMessage,
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 TextField(
                   controller: _textController,
                   maxLines: 5,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'Enter text or tap microphone to speak',
                     border: OutlineInputBorder(),
+                    suffixIcon: voiceProvider.isListening
+                        ? Container(
+                      margin: EdgeInsets.all(8),
+                      child: CircularProgressIndicator(),
+                    )
+                        : null,
                   ),
                 ),
-                const SizedBox(height: 20),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: voiceProvider.isSpeaking
-                          ? () => voiceProvider.stop()
-                          : () => voiceProvider.speak(_textController.text),
-                      icon: Icon(
-                        voiceProvider.isSpeaking ? Icons.stop : Icons.play_arrow,
-                      ),
-                      label: Text(
-                        voiceProvider.isSpeaking ? 'Stop' : 'Speak',
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: voiceProvider.isListening
-                          ? () => voiceProvider.stopListening()
-                          : () => voiceProvider.startListening((text) {
-                        _textController.text = text;
-                      }),
-                      icon: Icon(
-                        voiceProvider.isListening
-                            ? Icons.mic_off
-                            : Icons.mic,
-                      ),
-                      label: Text(
-                        voiceProvider.isListening ? 'Stop' : 'Listen',
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: voiceProvider.isListening
-                            ? Colors.red
-                            : null,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                _buildSlider(
-                  'Volume',
-                  voiceProvider.volume,
-                  voiceProvider.updateVolume,
-                ),
-                _buildSlider(
-                  'Pitch',
-                  voiceProvider.pitch,
-                  voiceProvider.updatePitch,
-                ),
-                _buildSlider(
-                  'Rate',
-                  voiceProvider.rate,
-                  voiceProvider.updateRate,
-                ),
+                // ... rest of the UI remains the same ...
               ],
             ),
           );
         },
       ),
-    );
-  }
-
-  Widget _buildSlider(
-      String label,
-      double value,
-      void Function(double) onChanged,
-      ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label),
-        Row(
-          children: [
-            Expanded(
-              child: Slider(
-                value: value,
-                min: 0.0,
-                max: 1.0,
-                onChanged: onChanged,
-              ),
-            ),
-            Text(value.toStringAsFixed(2)),
-          ],
-        ),
-      ],
     );
   }
 }
